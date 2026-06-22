@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+# ======================================================================= #
+#  FilaMind Setup - CLI front-end.                                         #
+#  Same engine as the Setup widget in FilaMind flow. Modes:               #
+#    filamind-setup                 interactive menu (default)             #
+#    filamind-setup bootstrap       first-run wizard (curl|bash entry)     #
+#    filamind-setup list            catalog + installed status             #
+#    filamind-setup install <id>    install a component (+ its deps)       #
+#    filamind-setup remove  <id>    remove a component                     #
+#    filamind-setup probe           show what was detected                 #
+#  GPL-3.0-or-later - FilaMind's own.                                       #
+# ======================================================================= #
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from engine import SetupEngine, SetupError  # noqa: E402
+
+
+def _ask(question: str, options: list[str]) -> str:
+    print("\n" + question)
+    for i, o in enumerate(options, 1):
+        print(f"  {i}) {o}")
+    while True:
+        sel = input("> ").strip()
+        if sel.isdigit() and 1 <= int(sel) <= len(options):
+            return options[int(sel) - 1]
+
+
+def cmd_list(eng: SetupEngine) -> int:
+    p = eng.probe()
+    group = None
+    for c in eng.list_components():
+        if c.group != group:
+            group = c.group
+            print(f"\n== {group} ==")
+        mark = "*" if c.first_party else " "
+        state = "installed" if p["installed"].get(c.id) else "-"
+        print(f" {mark} {c.id:22} {state:10} {c.desc}")
+    return 0
+
+
+def cmd_menu(eng: SetupEngine) -> int:
+    while True:
+        p = eng.probe()
+        comps = eng.list_components()
+        print("\n== FilaMind Setup ==")
+        for i, c in enumerate(comps, 1):
+            mark = "*" if c.first_party else " "
+            state = "[installed]" if p["installed"].get(c.id) else ""
+            print(f" {i:2}){mark} {c.name:26} {state}")
+        print("  q) quit")
+        choice = input("select > ").strip().lower()
+        if choice in ("q", "quit", ""):
+            return 0
+        if not choice.isdigit() or not (1 <= int(choice) <= len(comps)):
+            continue
+        c = comps[int(choice) - 1]
+        installed = p["installed"].get(c.id)
+        action = input(
+            f"[{c.name}] " + ("(r)emove / back > " if installed else "(i)nstall / back > ")
+        ).strip().lower()
+        try:
+            if action == "i" and not installed:
+                eng.install(c.id, probe=p)
+            elif action == "r" and installed:
+                eng.remove(c.id)
+        except SetupError as e:
+            print(f"!! {e}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="filamind-setup", description="FilaMind suite installer")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("bootstrap")
+    sub.add_parser("menu")
+    sub.add_parser("list")
+    sub.add_parser("probe")
+    for verb in ("install", "remove", "update"):
+        sp = sub.add_parser(verb)
+        sp.add_argument("id")
+    args = ap.parse_args()
+
+    eng = SetupEngine()
+    try:
+        if args.cmd == "bootstrap":
+            eng.bootstrap(ask=_ask)
+            return 0
+        if args.cmd == "list":
+            return cmd_list(eng)
+        if args.cmd == "probe":
+            p = eng.probe()
+            print(f"OS: {p['os']}")
+            print(f"Klipper: {p['has_klipper']}  Moonraker: {p['has_moonraker']}")
+            return 0
+        if args.cmd in ("install", "update"):
+            eng.install(args.id)
+            return 0
+        if args.cmd == "remove":
+            eng.remove(args.id)
+            return 0
+        return cmd_menu(eng)
+    except SetupError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,272 @@
+# ======================================================================= #
+#  FilaMind Setup - shared engine.                                         #
+#  One engine, two front-ends: the `filamind-setup` CLI and the Setup      #
+#  widget in FilaMind flow both drive it. Installs the FilaMind suite and   #
+#  the wider Klipper ecosystem by delegating to each component's own        #
+#  installer; nothing here is destructive without the operator's say-so.    #
+#  GPL-3.0-or-later - FilaMind's own.                                       #
+# ======================================================================= #
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+CATALOG = Path(__file__).with_name("catalog.json")
+HOME = Path.home()
+
+
+@dataclass
+class Component:
+    id: str
+    name: str
+    kind: str
+    repo: str
+    type: str  # git_repo | web | service | tauri | manual
+    deps: list[str] = field(default_factory=list)
+    first_party: bool = False
+    group: str = ""
+    desc: str = ""
+    manager_key: str = ""
+    service: str = ""
+    dir: str = ""
+
+    @property
+    def install_dir(self) -> Path:
+        return HOME / (self.dir or self.id)
+
+    @property
+    def repo_url(self) -> str:
+        return f"https://github.com/{self.repo}.git"
+
+    @property
+    def raw_installer(self) -> str:
+        # First-party apps carry a one-line scripts/install.sh in their repo.
+        return f"https://raw.githubusercontent.com/{self.repo}/main/scripts/install.sh"
+
+
+def load_catalog(path: Path = CATALOG) -> dict[str, Component]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, Component] = {}
+    for g in data["groups"]:
+        for c in g["components"]:
+            out[c["id"]] = Component(
+                id=c["id"],
+                name=c["name"],
+                kind=c["kind"],
+                repo=c["repo"],
+                type=c["type"],
+                deps=c.get("deps", []),
+                first_party=c.get("first_party", False),
+                group=g["group"],
+                desc=c.get("desc", ""),
+                manager_key=c.get("manager_key", ""),
+                service=c.get("service", ""),
+                dir=c.get("dir", ""),
+            )
+    return out
+
+
+def resolve_order(ids: list[str], catalog: dict[str, Component]) -> list[str]:
+    """Topological install order so dependencies come first (e.g. moonraker before mainsail)."""
+    seen: set[str] = set()
+    order: list[str] = []
+
+    def visit(cid: str) -> None:
+        if cid in seen or cid not in catalog:
+            return
+        seen.add(cid)
+        for dep in catalog[cid].deps:
+            visit(dep)
+        order.append(cid)
+
+    for cid in ids:
+        visit(cid)
+    return order
+
+
+def _moonraker_managed(url: str = "http://127.0.0.1:7125") -> set[str]:
+    """Names the local Moonraker update manager tracks (lowercased); empty if unreachable."""
+    try:
+        with urllib.request.urlopen(f"{url}/machine/update/status", timeout=3) as r:
+            data = json.load(r)
+        info = data.get("result", {}).get("version_info", {})
+        return {k.lower() for k in info}
+    except Exception:
+        return set()
+
+
+class SetupError(RuntimeError):
+    pass
+
+
+class SetupEngine:
+    """Drives catalog-based install / update / remove by delegating to each component's own
+    installer. Read-only probing is always safe; mutations shell out to git and the components'
+    install scripts (which use sudo where needed)."""
+
+    def __init__(
+        self,
+        log: Callable[[str], None] = print,
+        runner: Callable[[list[str]], int] | None = None,
+    ) -> None:
+        self.catalog = load_catalog()
+        self.log = log
+        self._run = runner or self._default_run
+
+    # ---- command runner (overridable for tests / the GUI backend) ----
+    def _default_run(self, cmd: list[str]) -> int:
+        self.log("    $ " + " ".join(cmd))
+        return subprocess.run(cmd, check=False).returncode
+
+    def _sh(self, script: str) -> int:
+        return self._run(["bash", "-c", script])
+
+    # ---- read-only ----
+    def list_components(self) -> list[Component]:
+        return list(self.catalog.values())
+
+    def probe(self, moonraker_url: str = "http://127.0.0.1:7125") -> dict:
+        """OS facts + which catalog components look installed. Pure reads, never mutates."""
+        managed = _moonraker_managed(moonraker_url)
+        services = self._systemd_units()
+        installed = {cid: self._is_installed(c, managed, services) for cid, c in self.catalog.items()}
+        return {
+            "os": self._os_release(),
+            "installed": installed,
+            "has_klipper": installed.get("klipper", False),
+            "has_moonraker": installed.get("moonraker", False),
+        }
+
+    def status(self, cid: str, probe: dict | None = None) -> str:
+        p = probe or self.probe()
+        return "installed" if p["installed"].get(cid) else "not-installed"
+
+    def _is_installed(self, c: Component, managed: set[str], services: set[str]) -> bool:
+        key = (c.manager_key or c.id).lower()
+        if key in managed:
+            return True
+        if c.service and c.service.lower() in services:
+            return True
+        return c.install_dir.is_dir()
+
+    def _systemd_units(self) -> set[str]:
+        try:
+            out = subprocess.run(
+                ["systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout
+        except FileNotFoundError:
+            return set()
+        return {line.split(".service")[0].strip().lower() for line in out.splitlines() if ".service" in line}
+
+    def _os_release(self) -> str:
+        try:
+            for line in Path("/etc/os-release").read_text().splitlines():
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+        except OSError:
+            pass
+        return os.uname().sysname if hasattr(os, "uname") else "unknown"
+
+    # ---- mutations ----
+    def install(self, cid: str, probe: dict | None = None) -> None:
+        if cid not in self.catalog:
+            raise SetupError(f"Unknown component: {cid}")
+        p = probe or self.probe()
+        for dep in resolve_order([cid], self.catalog):
+            c = self.catalog[dep]
+            if p["installed"].get(dep):
+                self.log(f"[skip] {c.name} already installed")
+                continue
+            self.log(f"[install] {c.name} ({c.type})")
+            self._do_install(c)
+
+    def remove(self, cid: str) -> None:
+        if cid not in self.catalog:
+            raise SetupError(f"Unknown component: {cid}")
+        c = self.catalog[cid]
+        self.log(f"[remove] {c.name}")
+        self._do_remove(c)
+
+    def _do_install(self, c: Component) -> None:
+        if c.first_party:
+            # FilaMind apps carry a self-cloning one-line installer.
+            if self._sh(f"curl -fsSL {c.raw_installer} | bash") != 0:
+                raise SetupError(f"{c.name} installer failed")
+            return
+        if c.type in ("git_repo", "service"):
+            dest = c.install_dir
+            if not (dest / ".git").is_dir():
+                if self._run(["git", "clone", "--depth", "1", c.repo_url, str(dest)]) != 0:
+                    raise SetupError(f"git clone of {c.name} failed")
+            installer = dest / "install.sh"
+            if installer.is_file():
+                self._sh(f"bash {installer}")
+            else:
+                self.log(f"    cloned {c.name}; no install.sh - finish per its docs")
+            return
+        if c.type == "web":
+            self.log(
+                f"    {c.name} is a web UI - install it with its own setup (or KIAUH); "
+                "this manager links it once present."
+            )
+            return
+        # manual
+        self.log(f"    {c.name} needs manual steps - see its documentation.")
+
+    def _do_remove(self, c: Component) -> None:
+        if c.first_party:
+            self._sh(f"curl -fsSL {c.raw_installer} | bash -s -- uninstall")
+            return
+        if c.service:
+            self._run(["sudo", "-n", "systemctl", "disable", "--now", c.service])
+        dest = c.install_dir
+        if dest.parent == HOME and dest.is_dir():
+            shutil.rmtree(dest, ignore_errors=True)
+            self.log(f"    removed {dest}")
+        else:
+            self.log(f"    left {dest} in place (not a direct $HOME child)")
+
+    # ---- wizards (front-ends supply `ask`) ----
+    def bootstrap(self, ask: Callable[[str, list[str]], str] | None = None) -> None:
+        """First-run wizard: probe, then guide a full install or installing alongside an existing setup."""
+        p = self.probe()
+        self.log(f"Detected: {p['os']}")
+        if not (p["has_klipper"] and p["has_moonraker"]):
+            self.log(
+                "Klipper and/or Moonraker were not detected. Install them first (e.g. with KIAUH), "
+                "then re-run to add the FilaMind suite."
+            )
+            return
+        existing = [u for u in ("mainsail", "fluidd", "klipperscreen") if p["installed"].get(u)]
+        if existing and ask:
+            choice = ask(
+                f"Found an existing setup ({', '.join(existing)}). How do you want to proceed?",
+                ["install FilaMind alongside", "migrate to FilaMind", "cancel"],
+            )
+            if choice == "cancel":
+                return
+            if choice == "migrate to FilaMind":
+                self.migrate(p)
+                return
+        self.log("Installing the FilaMind suite (flow + 3d)...")
+        for cid in ("filamind-flow", "filamind-3d"):
+            self.install(cid, probe=p)
+
+    def migrate(self, probe: dict | None = None) -> None:
+        """Adopt an existing Klipper/Moonraker setup: install FilaMind alongside, non-destructively.
+        Settings stay in Moonraker's DB and are picked up automatically; nothing is deleted."""
+        p = probe or self.probe()
+        self.log("Migrating non-destructively: installing FilaMind alongside your current UI.")
+        self.log("Your Klipper config, macros and Moonraker database are left untouched.")
+        for cid in ("filamind-flow", "filamind-3d"):
+            self.install(cid, probe=p)
+        self.log("Done. Your previous UI still works; open FilaMind to use the suite.")

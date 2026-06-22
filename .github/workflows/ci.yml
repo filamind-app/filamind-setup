@@ -1,0 +1,27 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Python compiles
+        run: python -m py_compile engine.py filamind-setup
+      - name: Catalog is valid JSON
+        run: python -c "import json; json.load(open('catalog.json'))"
+      - name: Bootstrap script parses
+        run: bash -n install.sh
+      - name: Engine smoke test (load catalog + resolve deps, no host mutations)
+        run: |
+          python - <<'PY'
+          import engine
+          cat = engine.load_catalog()
+          assert cat, "catalog empty"
+          order = engine.resolve_order(["mainsail"], cat)
+          assert order.index("klipper") < order.index("moonraker") < order.index("mainsail")
+          print(f"OK: {len(cat)} components, dep order sane")
+          PY
