@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +22,13 @@ from typing import Callable
 
 CATALOG = Path(__file__).with_name("catalog.json")
 HOME = Path.home()
+
+# A GitHub "owner/repo" slug. Validated before it is ever placed in a URL or a command so a
+# catalog typo or hostile entry can never inject shell metacharacters or a foreign host.
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+# Component install types the engine knows how to act on.
+_KNOWN_TYPES = {"git_repo", "web", "service", "tauri", "manual"}
 
 
 @dataclass
@@ -55,6 +65,14 @@ def load_catalog(path: Path = CATALOG) -> dict[str, Component]:
     out: dict[str, Component] = {}
     for g in data["groups"]:
         for c in g["components"]:
+            # Validate up front so a malformed catalog fails loudly here, not mid-install.
+            for req in ("id", "name", "kind", "repo", "type"):
+                if not c.get(req):
+                    raise SetupError(f"Catalog component is missing '{req}': {c!r}")
+            if c["type"] not in _KNOWN_TYPES:
+                raise SetupError(f"Catalog component {c['id']!r} has unknown type {c['type']!r}")
+            if not _REPO_RE.match(c["repo"]):
+                raise SetupError(f"Catalog component {c['id']!r} has an unsafe repo {c['repo']!r}")
             out[c["id"]] = Component(
                 id=c["id"],
                 name=c["name"],
@@ -97,7 +115,8 @@ def _moonraker_managed(url: str = "http://127.0.0.1:7125") -> set[str]:
             data = json.load(r)
         info = data.get("result", {}).get("version_info", {})
         return {k.lower() for k in info}
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError):
+        # Unreachable / non-JSON / unexpected shape — detection falls back to the dir/unit heuristics.
         return set()
 
 
@@ -124,8 +143,22 @@ class SetupEngine:
         self.log("    $ " + " ".join(cmd))
         return subprocess.run(cmd, check=False).returncode
 
-    def _sh(self, script: str) -> int:
-        return self._run(["bash", "-c", script])
+    def _run_remote_installer(self, c: Component, *args: str) -> int:
+        """Download a first-party component's installer to a temp file (no shell), then run it via
+        ``bash <file> [args]`` with list arguments - so a repo/path can never inject shell syntax."""
+        if not _REPO_RE.match(c.repo):
+            raise SetupError(f"Unsafe repo for {c.name}: {c.repo!r}")
+        fd, tmp = tempfile.mkstemp(suffix=".sh")
+        os.close(fd)
+        try:
+            if self._run(["curl", "-fsSL", c.raw_installer, "-o", tmp]) != 0:
+                raise SetupError(f"Could not download the {c.name} installer")
+            return self._run(["bash", tmp, *args])
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     # ---- read-only ----
     def list_components(self) -> list[Component]:
@@ -198,18 +231,28 @@ class SetupEngine:
 
     def _do_install(self, c: Component) -> None:
         if c.first_party:
-            # FilaMind apps carry a self-cloning one-line installer.
-            if self._sh(f"curl -fsSL {c.raw_installer} | bash") != 0:
+            # FilaMind apps carry a self-cloning one-line installer (fetched + run without a shell).
+            if self._run_remote_installer(c) != 0:
                 raise SetupError(f"{c.name} installer failed")
             return
         if c.type in ("git_repo", "service"):
             dest = c.install_dir
+            # A leftover non-git directory (e.g. an interrupted clone) would corrupt the install -
+            # clear it first, but only ever a direct $HOME child.
+            if dest.exists() and not (dest / ".git").is_dir():
+                if dest.parent != HOME:
+                    raise SetupError(f"Refusing to clear {dest} (not a direct $HOME child)")
+                shutil.rmtree(dest)
             if not (dest / ".git").is_dir():
                 if self._run(["git", "clone", "--depth", "1", c.repo_url, str(dest)]) != 0:
                     raise SetupError(f"git clone of {c.name} failed")
+            # Never trust a half-finished clone before running its installer.
+            if self._run(["git", "-C", str(dest), "rev-parse", "--is-inside-work-tree"]) != 0:
+                raise SetupError(f"{c.name} clone is incomplete/corrupt at {dest}")
             installer = dest / "install.sh"
             if installer.is_file():
-                self._sh(f"bash {installer}")
+                if self._run(["bash", str(installer)]) != 0:
+                    raise SetupError(f"{c.name} install.sh failed")
             else:
                 self.log(f"    cloned {c.name}; no install.sh - finish per its docs")
             return
@@ -219,18 +262,26 @@ class SetupEngine:
                 "this manager links it once present."
             )
             return
-        # manual
-        self.log(f"    {c.name} needs manual steps - see its documentation.")
+        if c.type == "manual":
+            self.log(f"    {c.name} needs manual steps - see its documentation.")
+            return
+        # Any other type (e.g. a non-first-party tauri) is not installable here - fail loudly
+        # instead of silently claiming success.
+        raise SetupError(f"Don't know how to install {c.name} (type {c.type!r})")
 
     def _do_remove(self, c: Component) -> None:
         if c.first_party:
-            self._sh(f"curl -fsSL {c.raw_installer} | bash -s -- uninstall")
+            self._run_remote_installer(c, "uninstall")
             return
         if c.service:
             self._run(["sudo", "-n", "systemctl", "disable", "--now", c.service])
         dest = c.install_dir
         if dest.parent == HOME and dest.is_dir():
-            shutil.rmtree(dest, ignore_errors=True)
+            # No silent ignore_errors: a failed removal must surface, never report a false "removed".
+            try:
+                shutil.rmtree(dest)
+            except OSError as exc:
+                raise SetupError(f"Could not remove {dest}: {exc}") from exc
             self.log(f"    removed {dest}")
         else:
             self.log(f"    left {dest} in place (not a direct $HOME child)")

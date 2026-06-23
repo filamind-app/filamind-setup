@@ -28,7 +28,9 @@ if [ ! -d "$APP/.git" ]; then
   git clone --depth 1 "$REPO" "$APP"
 else
   info "Updating FilaMind Setup"
-  git -C "$APP" pull --ff-only || true
+  # Don't fail the whole bootstrap on a pull error, but never hide it either - say so and continue
+  # with the cached checkout instead of silently running stale code.
+  git -C "$APP" pull --ff-only || echo "  (update failed; continuing with the existing checkout)" >&2
 fi
 
 chmod +x "$APP/filamind-setup"
