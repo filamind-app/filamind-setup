@@ -25,7 +25,13 @@ def _ask(question: str, options: list[str]) -> str:
     for i, o in enumerate(options, 1):
         print(f"  {i}) {o}")
     while True:
-        sel = input("> ").strip()
+        try:
+            sel = input("> ").strip()
+        except EOFError:
+            # No interactive terminal (e.g. headless curl|bash). Degrade to the last option, which
+            # is the safe/cancel choice, instead of looping forever or crashing with a traceback.
+            print("(no terminal input; choosing the safe default)")
+            return options[-1]
         if sel.isdigit() and 1 <= int(sel) <= len(options):
             return options[int(sel) - 1]
 
@@ -108,6 +114,15 @@ def main() -> int:
         return 1
     except KeyboardInterrupt:
         return 130
+    except EOFError:
+        # A truly headless run (no terminal to prompt) reached an interactive prompt - exit cleanly
+        # with guidance instead of a raw traceback.
+        print(
+            "error: no terminal available to prompt. Re-run interactively, or pass an explicit "
+            "command, e.g.  ... | bash -s -- menu",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
