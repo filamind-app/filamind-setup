@@ -45,4 +45,10 @@ else
   info "Installed 'filamind-setup' to ~/.local/bin (ensure it's on your PATH)."
 fi
 
+# Under `curl ... | bash`, python3 would inherit the curl pipe as stdin (already at EOF, not a TTY),
+# so the first-run wizard's prompts hit EOF. Reconnect the controlling terminal when one is attached
+# (same probe the per-app installers use) so the wizard can prompt; if there is truly no terminal,
+# fall through and the CLI exits cleanly with a message instead of an EOF traceback.
+if [ ! -t 0 ] && (exec </dev/tty) 2>/dev/null; then exec </dev/tty; fi
+
 exec python3 "$APP/filamind-setup" "$CMD"
