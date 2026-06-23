@@ -144,8 +144,15 @@ class SetupEngine:
         return subprocess.run(cmd, check=False).returncode
 
     def _run_remote_installer(self, c: Component, *args: str) -> int:
-        """Download a first-party component's installer to a temp file (no shell), then run it via
-        ``bash <file> [args]`` with list arguments - so a repo/path can never inject shell syntax."""
+        """Download a first-party component's installer (no shell), then run its CONTENTS via
+        ``bash -c`` with list arguments - so a repo/path can never inject shell syntax.
+
+        We run the script's *contents*, not the temp-file path: the first-party installers decide
+        "am I a clone or a curl|bash pipe?" by testing ``[ -f "$BASH_SOURCE" ]``. Handing them a temp
+        file makes that test true, so they assume a clone layout (deploy/install.sh as a sibling)
+        that isn't there and fail (APP resolves to ``/``). Running the contents leaves BASH_SOURCE
+        empty - the same state as ``curl | bash`` - so the installer self-clones, which is correct.
+        """
         if not _REPO_RE.match(c.repo):
             raise SetupError(f"Unsafe repo for {c.name}: {c.repo!r}")
         fd, tmp = tempfile.mkstemp(suffix=".sh")
@@ -153,7 +160,10 @@ class SetupEngine:
         try:
             if self._run(["curl", "-fsSL", c.raw_installer, "-o", tmp]) != 0:
                 raise SetupError(f"Could not download the {c.name} installer")
-            return self._run(["bash", tmp, *args])
+            with open(tmp, encoding="utf-8") as fh:
+                script = fh.read()
+            # $0 is a label; real args become $1.. (passed as a list, never shell-interpolated).
+            return self._run(["bash", "-c", script, "filamind-setup", *args])
         finally:
             try:
                 os.unlink(tmp)
