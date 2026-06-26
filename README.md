@@ -29,7 +29,7 @@ Run on the printer host, as your normal printer user:
 curl -fsSL https://raw.githubusercontent.com/filamind-app/filamind-setup/main/install.sh | bash
 ```
 
-This clones the installer, puts the `filamind-setup` command on your PATH (system-wide if it can, otherwise in `~/.local/bin`), and runs the **first-run wizard**. The wizard detects your printer, then either installs the FilaMind suite or adopts an existing Mainsail/Fluidd setup alongside it, without touching what you already have. It needs only `git` and `python3` to start, and you can re-run it any time to update or repair.
+This clones the installer, puts the `filamind-setup` command on your PATH (system-wide if it can, otherwise in `~/.local/bin`), and runs the **first-run wizard** — which covers every case from one command. It detects your printer and: on a **fresh host** installs the whole stack from scratch (Klipper, Moonraker, and the FilaMind suite); on an **existing Mainsail/Fluidd** host installs FilaMind alongside or migrates, without touching what you already have. It needs only `git` and `python3` to start, and you can re-run it any time to update or repair.
 
 To skip the wizard and go straight to something specific, pass a command through:
 
@@ -100,7 +100,7 @@ How a component installs depends on its catalog `type`:
 
 ## Wizards
 
-- **Setup wizard** (`bootstrap`) — the first install. It probes the host, then installs the FilaMind suite. If Klipper or Moonraker aren't present yet, it tells you to install those first and stops, rather than guessing.
+- **Setup wizard** (`bootstrap`) — the first install, covering every scenario from one command. It probes the host, then installs whatever is missing in dependency order: on a fresh host that means the whole stack from scratch (Klipper → Moonraker → the FilaMind suite); on a host that already has Klipper and Moonraker it just adds the suite. Anything already present is skipped, never reinstalled.
 - **Migration** — adopt an existing Klipper / Moonraker / UI setup by installing FilaMind **alongside** it. This is non-destructive: your Klipper config, macros, and Moonraker database are left untouched, and your previous UI keeps working.
 
 ## How it's built

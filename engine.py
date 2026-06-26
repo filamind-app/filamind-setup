@@ -45,6 +45,7 @@ class Component:
     manager_key: str = ""
     service: str = ""
     dir: str = ""
+    install: str = ""  # install-script path within the repo clone (defaults to install.sh)
 
     @property
     def install_dir(self) -> Path:
@@ -86,6 +87,7 @@ def load_catalog(path: Path = CATALOG) -> dict[str, Component]:
                 manager_key=c.get("manager_key", ""),
                 service=c.get("service", ""),
                 dir=c.get("dir", ""),
+                install=c.get("install", ""),
             )
     return out
 
@@ -223,14 +225,23 @@ class SetupEngine:
     def install(self, cid: str, probe: dict | None = None) -> None:
         if cid not in self.catalog:
             raise SetupError(f"Unknown component: {cid}")
+        self.install_all([cid], probe=probe)
+
+    def install_all(self, ids: list[str], probe: dict | None = None) -> None:
+        """Install several targets in ONE dependency-resolved pass, so a shared dependency (e.g.
+        Moonraker) installs once, not once per target. On an empty host this naturally installs
+        Klipper -> Moonraker first, then the targets - a true from-scratch install."""
         p = probe or self.probe()
-        for dep in resolve_order([cid], self.catalog):
-            c = self.catalog[dep]
+        for dep in resolve_order(ids, self.catalog):
+            c = self.catalog.get(dep)
+            if c is None:
+                continue
             if p["installed"].get(dep):
                 self.log(f"[skip] {c.name} already installed")
                 continue
             self.log(f"[install] {c.name} ({c.type})")
             self._do_install(c)
+            p["installed"][dep] = True  # mark done so a later target won't reinstall it this run
 
     def remove(self, cid: str) -> None:
         if cid not in self.catalog:
@@ -259,12 +270,16 @@ class SetupEngine:
             # Never trust a half-finished clone before running its installer.
             if self._run(["git", "-C", str(dest), "rev-parse", "--is-inside-work-tree"]) != 0:
                 raise SetupError(f"{c.name} clone is incomplete/corrupt at {dest}")
-            installer = dest / "install.sh"
+            # Run the component's own installer. Most carry install.sh at the root; some - Klipper
+            # (scripts/install-debian.sh), Moonraker (scripts/install-moonraker.sh), KlipperScreen -
+            # ship it elsewhere, declared as `install` in the catalog. Those official installers set
+            # up the OS deps, the venv and the systemd service, i.e. a real from-scratch install.
+            installer = dest / (c.install or "install.sh")
             if installer.is_file():
                 if self._run(["bash", str(installer)]) != 0:
-                    raise SetupError(f"{c.name} install.sh failed")
+                    raise SetupError(f"{c.name} installer ({installer.name}) failed")
             else:
-                self.log(f"    cloned {c.name}; no install.sh - finish per its docs")
+                self.log(f"    cloned {c.name}; no installer at {installer.name} - finish per its docs")
             return
         if c.type == "web":
             self.log(
@@ -298,15 +313,12 @@ class SetupEngine:
 
     # ---- wizards (front-ends supply `ask`) ----
     def bootstrap(self, ask: Callable[[str, list[str]], str] | None = None) -> None:
-        """First-run wizard: probe, then guide a full install or installing alongside an existing setup."""
+        """First-run wizard covering every scenario from one command: an EMPTY host gets the full
+        stack from scratch (Klipper + Moonraker + the FilaMind suite); an EXISTING Mainsail/Fluidd
+        host is installed alongside or migrated; an already-FilaMind host just tops up what's missing."""
         p = self.probe()
         self.log(f"Detected: {p['os']}")
-        if not (p["has_klipper"] and p["has_moonraker"]):
-            self.log(
-                "Klipper and/or Moonraker were not detected. Install them first (e.g. with KIAUH), "
-                "then re-run to add the FilaMind suite."
-            )
-            return
+        empty = not (p["has_klipper"] and p["has_moonraker"])
         existing = [u for u in ("mainsail", "fluidd", "klipperscreen") if p["installed"].get(u)]
         if existing and ask:
             choice = ask(
@@ -318,9 +330,14 @@ class SetupEngine:
             if choice == "migrate to FilaMind":
                 self.migrate(p)
                 return
-        self.log("Installing the FilaMind suite (flow + 3d)...")
-        for cid in ("filamind-flow", "filamind-3d"):
-            self.install(cid, probe=p)
+        if empty:
+            self.log("No Klipper/Moonraker detected - installing the whole stack from scratch:")
+            self.log("  Klipper + Moonraker + the FilaMind suite (flow + 3d).")
+        else:
+            self.log("Installing the FilaMind suite (flow + 3d); any missing dependency is added too.")
+        # Dependency resolution installs Klipper -> Moonraker first on an empty host, then the suite.
+        self.install_all(["filamind-flow", "filamind-3d"], probe=p)
+        self.log("Done.")
 
     def migrate(self, probe: dict | None = None) -> None:
         """Adopt an existing Klipper/Moonraker setup: install FilaMind alongside, non-destructively.
@@ -328,6 +345,5 @@ class SetupEngine:
         p = probe or self.probe()
         self.log("Migrating non-destructively: installing FilaMind alongside your current UI.")
         self.log("Your Klipper config, macros and Moonraker database are left untouched.")
-        for cid in ("filamind-flow", "filamind-3d"):
-            self.install(cid, probe=p)
+        self.install_all(["filamind-flow", "filamind-3d"], probe=p)
         self.log("Done. Your previous UI still works; open FilaMind to use the suite.")
