@@ -7,6 +7,14 @@
 # It covers every case from one command: a fresh host gets the whole stack from scratch
 # (Klipper + Moonraker + the FilaMind suite); an existing setup is adopted alongside or migrated.
 # Re-runnable. Pass an explicit command to skip the wizard, e.g. `... | bash -s -- menu`.
+
+# Everything runs inside this { } group on purpose. Under `curl ... | bash`, bash reads the script
+# itself from stdin (the curl pipe). The group forces bash to read and parse the WHOLE script up to
+# the closing `}` before it executes any of it - so when `exec </dev/tty` later repoints stdin at the
+# terminal, there is no more script left to read from stdin. Without the group, bash would try to
+# read the rest of the script from /dev/tty and just sit there waiting for you to type: a "freeze"
+# right after the PATH line, before the wizard ever starts.
+{
 set -euo pipefail
 
 REPO="${FILAMIND_SETUP_REPO:-https://github.com/filamind-app/filamind-setup.git}"
@@ -49,7 +57,8 @@ fi
 # Under `curl ... | bash`, python3 would inherit the curl pipe as stdin (already at EOF, not a TTY),
 # so the first-run wizard's prompts hit EOF. Reconnect the controlling terminal when one is attached
 # (same probe the per-app installers use) so the wizard can prompt; if there is truly no terminal,
-# fall through and the CLI exits cleanly with a message instead of an EOF traceback.
+# fall through and the CLI exits cleanly with a message instead of an EOF traceback. This is safe
+# here only because the { } group above has already read the rest of the script from stdin.
 if [ ! -t 0 ] && (exec </dev/tty) 2>/dev/null; then exec </dev/tty; fi
 
 # Two ways to finish (§14.5) - the terminal wizard runs now by default; a graphical
@@ -60,3 +69,4 @@ echo "  - Browser:  filamind-setup serve   (prints a one-time link to open)"
 
 # -u (unbuffered) so wizard progress streams live; a buffered pipe can look like a freeze.
 exec python3 -u "$APP/filamind-setup" "$CMD"
+}
