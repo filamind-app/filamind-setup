@@ -59,12 +59,14 @@ WIZARD_HTML = r"""<!doctype html>
       row('Moonraker', d.has_moonraker?'detected':'not found', d.has_moonraker?'ok':'no') +
       row('Components installed', inst.length? inst.join(', '):'none', inst.length?'ok':'no');
     var a = $('actions');
-    if(!d.has_klipper || !d.has_moonraker){
-      a.innerHTML = '<p class="warn">Install Klipper and Moonraker first (e.g. with KIAUH), then reload this page.</p>';
-      return;
-    }
+    var bare = (!d.has_klipper || !d.has_moonraker);
     var existing = ['mainsail','fluidd','klipperscreen'].filter(function(u){ return d.installed[u]; });
-    if(existing.length){
+    if(bare){
+      var missing = []; if(!d.has_klipper) missing.push('Klipper'); if(!d.has_moonraker) missing.push('Moonraker');
+      a.innerHTML = '<p>This looks like a <b>fresh host</b>. FilaMind Setup installs the whole stack from scratch in one go - ' +
+        esc(missing.join(' + '))+' + the FilaMind suite (flow + 3d).</p>' +
+        '<button class="primary" onclick="run(\'install_suite\')">Install the full stack</button>';
+    } else if(existing.length){
       a.innerHTML = '<p>Found an existing UI ('+esc(existing.join(', '))+'). FilaMind installs <b>alongside</b> it - nothing is removed.</p>' +
         '<button class="primary" onclick="run(\'install_suite\')">Install FilaMind alongside</button>' +
         '<button onclick="run(\'migrate\')">Migrate to FilaMind</button>';

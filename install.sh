@@ -3,8 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/filamind-app/filamind-setup/main/install.sh | bash
 #
-# Clones this installer, puts `filamind-setup` on your PATH, and runs the first-run wizard
-# (detects your printer, then installs the FilaMind suite or adopts an existing setup).
+# Clones this installer, puts `filamind-setup` on your PATH, and runs the first-run wizard.
+# It covers every case from one command: a fresh host gets the whole stack from scratch
+# (Klipper + Moonraker + the FilaMind suite); an existing setup is adopted alongside or migrated.
 # Re-runnable. Pass an explicit command to skip the wizard, e.g. `... | bash -s -- menu`.
 set -euo pipefail
 

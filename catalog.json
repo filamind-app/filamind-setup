@@ -5,8 +5,8 @@
     {
       "group": "core",
       "components": [
-        { "id": "klipper", "name": "Klipper", "kind": "firmware-host", "repo": "Klipper3d/klipper", "type": "git_repo", "deps": [], "desc": "3D-printer firmware: the motion planner runs on the host and streams precisely-timed steps to the MCU." },
-        { "id": "moonraker", "name": "Moonraker", "kind": "api-server", "repo": "Arksine/moonraker", "type": "git_repo", "deps": ["klipper"], "desc": "API server that exposes Klipper over HTTP/WebSocket so web UIs, apps and tools can talk to the printer." }
+        { "id": "klipper", "name": "Klipper", "kind": "firmware-host", "repo": "Klipper3d/klipper", "type": "git_repo", "deps": [], "install": "scripts/install-debian.sh", "desc": "3D-printer firmware: the motion planner runs on the host and streams precisely-timed steps to the MCU." },
+        { "id": "moonraker", "name": "Moonraker", "kind": "api-server", "repo": "Arksine/moonraker", "type": "git_repo", "deps": ["klipper"], "install": "scripts/install-moonraker.sh", "desc": "API server that exposes Klipper over HTTP/WebSocket so web UIs, apps and tools can talk to the printer." }
       ]
     },
     {
@@ -20,7 +20,7 @@
     {
       "group": "touchscreens",
       "components": [
-        { "id": "klipperscreen", "name": "KlipperScreen", "kind": "touch", "repo": "KlipperScreen/KlipperScreen", "type": "git_repo", "deps": ["moonraker"], "manager_key": "KlipperScreen", "service": "KlipperScreen", "dir": "KlipperScreen", "desc": "A touchscreen interface for Klipper that runs on the printer's own attached display." },
+        { "id": "klipperscreen", "name": "KlipperScreen", "kind": "touch", "repo": "KlipperScreen/KlipperScreen", "type": "git_repo", "deps": ["moonraker"], "manager_key": "KlipperScreen", "service": "KlipperScreen", "dir": "KlipperScreen", "install": "scripts/KlipperScreen-install.sh", "desc": "A touchscreen interface for Klipper that runs on the printer's own attached display." },
         { "id": "guppyscreen", "name": "Guppyscreen", "kind": "touch", "repo": "ballaswag/guppyscreen", "type": "git_repo", "deps": ["moonraker"], "dir": "guppyscreen", "desc": "A lightweight native touchscreen UI for Klipper aimed at embedded displays." },
         { "id": "filamind-screen", "name": "FilaMind screen", "kind": "touch", "repo": "filamind-app/filamind-screen", "type": "tauri", "deps": ["moonraker"], "first_party": true, "dir": "filamind-screen", "desc": "FilaMind's native touchscreen app for the printer's attached display." }
       ]
