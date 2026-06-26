@@ -10,7 +10,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Python compiles
-        run: python -m py_compile engine.py filamind-setup
+        run: python -m py_compile engine.py setup_server.py filamind-setup
       - name: Catalog is valid JSON
         run: python -c "import json; json.load(open('catalog.json'))"
       - name: Bootstrap script parses
