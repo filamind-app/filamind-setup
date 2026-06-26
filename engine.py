@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -29,6 +30,12 @@ _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 # Component install types the engine knows how to act on.
 _KNOWN_TYPES = {"git_repo", "web", "service", "tauri", "manual"}
+
+
+def _flush_print(line: str) -> None:
+    # Flush every line as it is logged: under `curl | bash` a block-buffered stream shows nothing
+    # until the process exits, which looks exactly like a freeze. Flushing keeps progress live.
+    print(line, flush=True)
 
 
 @dataclass
@@ -133,17 +140,24 @@ class SetupEngine:
 
     def __init__(
         self,
-        log: Callable[[str], None] = print,
+        log: Callable[[str], None] = _flush_print,
         runner: Callable[[list[str]], int] | None = None,
     ) -> None:
         self.catalog = load_catalog()
         self.log = log
         self._run = runner or self._default_run
+        self._sudo_keepalive: threading.Thread | None = None
 
     # ---- command runner (overridable for tests / the GUI backend) ----
     def _default_run(self, cmd: list[str]) -> int:
         self.log("    $ " + " ".join(cmd))
         return subprocess.run(cmd, check=False).returncode
+
+    def _run_quiet(self, cmd: list[str]) -> int:
+        """Run without echoing the command or its output - for probes like `sudo -n true`."""
+        return subprocess.run(
+            cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).returncode
 
     def _run_remote_installer(self, c: Component, *args: str) -> int:
         """Download a first-party component's installer (no shell), then run its CONTENTS via
@@ -232,7 +246,11 @@ class SetupEngine:
         Moonraker) installs once, not once per target. On an empty host this naturally installs
         Klipper -> Moonraker first, then the targets - a true from-scratch install."""
         p = probe or self.probe()
-        for dep in resolve_order(ids, self.catalog):
+        resolved = resolve_order(ids, self.catalog)
+        todo = [d for d in resolved if self.catalog.get(d) and not p["installed"].get(d)]
+        # Get sudo out of the way ONCE, up front, before any installer blocks on a hidden prompt.
+        self._ensure_privileges(todo)
+        for dep in resolved:
             c = self.catalog.get(dep)
             if c is None:
                 continue
@@ -242,6 +260,51 @@ class SetupEngine:
             self.log(f"[install] {c.name} ({c.type})")
             self._do_install(c)
             p["installed"][dep] = True  # mark done so a later target won't reinstall it this run
+
+    def _ensure_privileges(self, todo: list[str]) -> None:
+        """Acquire sudo ONCE, up front, with a clear prompt, then keep it warm for the whole run.
+
+        Each official installer (Klipper, Moonraker, ...) calls ``sudo`` for apt and systemd. Left
+        alone, the first call blocks on a password prompt that is easy to miss under ``curl | bash``
+        - which looks exactly like a freeze. Prompting once here, visibly, fixes that; the cached
+        credential (refreshed by the keep-alive) then carries every installer through unattended.
+        No-op when there is nothing to install, or on a host without ``sudo`` (e.g. a dev box)."""
+        if not todo:
+            return
+        sudo = shutil.which("sudo")
+        if not sudo:
+            return  # no sudo here (dev/Windows, or already root) - installers handle root themselves
+        if self._run_quiet([sudo, "-n", "true"]) == 0:
+            self._start_sudo_keepalive(sudo)  # already cached / passwordless - just keep it warm
+            return
+        self.log("")
+        self.log("Administrator rights are needed to install system packages and services.")
+        self.log("You'll be asked for your password once now, then the install runs unattended.")
+        if subprocess.run([sudo, "-v"]).returncode != 0:
+            raise SetupError(
+                "Could not obtain administrator (sudo) rights - the from-scratch install needs "
+                "them. Re-run as a user with sudo access."
+            )
+        self._start_sudo_keepalive(sudo)
+
+    def _start_sudo_keepalive(self, sudo: str) -> None:
+        """Refresh the sudo timestamp every 60s in a daemon thread so a long install never
+        re-prompts. The thread dies with the process; no explicit teardown needed."""
+        if self._sudo_keepalive is not None:
+            return
+
+        stop = threading.Event()
+
+        def loop() -> None:
+            while not stop.wait(60):
+                subprocess.run(
+                    [sudo, "-n", "true"], check=False,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+
+        t = threading.Thread(target=loop, daemon=True)
+        t.start()
+        self._sudo_keepalive = t
 
     def remove(self, cid: str) -> None:
         if cid not in self.catalog:

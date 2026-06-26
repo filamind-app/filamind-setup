@@ -58,4 +58,5 @@ info "Finish setup either way:"
 echo "  - Terminal: filamind-setup menu"
 echo "  - Browser:  filamind-setup serve   (prints a one-time link to open)"
 
-exec python3 "$APP/filamind-setup" "$CMD"
+# -u (unbuffered) so wizard progress streams live; a buffered pipe can look like a freeze.
+exec python3 -u "$APP/filamind-setup" "$CMD"
