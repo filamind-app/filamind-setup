@@ -37,6 +37,16 @@ To skip the wizard and go straight to something specific, pass a command through
 curl -fsSL https://raw.githubusercontent.com/filamind-app/filamind-setup/main/install.sh | bash -s -- menu
 ```
 
+### Prefer a browser?
+
+You can finish in a graphical wizard instead of the terminal:
+
+```bash
+filamind-setup serve
+```
+
+It prints a one-time link — `http://<printer-ip>:8077/?t=<token>` — to open on any device on your network. The token is shown only in the terminal that launched it, so only you can drive the install. No extra dependencies: it's Python's standard library, over the same engine as the CLI.
+
 ## Ongoing use
 
 Once the command is on your PATH:
@@ -47,6 +57,7 @@ filamind-setup list         # the catalog + what's installed
 filamind-setup install <id> # install a component, and its dependencies
 filamind-setup remove  <id> # remove a component
 filamind-setup probe        # show what was detected
+filamind-setup serve        # finish setup from a browser (one-time link)
 filamind-setup bootstrap    # re-run the first-run wizard
 ```
 

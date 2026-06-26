@@ -51,4 +51,10 @@ fi
 # fall through and the CLI exits cleanly with a message instead of an EOF traceback.
 if [ ! -t 0 ] && (exec </dev/tty) 2>/dev/null; then exec </dev/tty; fi
 
+# Two ways to finish (§14.5) - the terminal wizard runs now by default; a graphical
+# browser wizard is one command away (it prints a one-time link only the operator sees).
+info "Finish setup either way:"
+echo "  - Terminal: filamind-setup menu"
+echo "  - Browser:  filamind-setup serve   (prints a one-time link to open)"
+
 exec python3 "$APP/filamind-setup" "$CMD"
