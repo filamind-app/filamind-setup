@@ -29,7 +29,7 @@ Run on the printer host, as your normal printer user:
 curl -fsSL https://raw.githubusercontent.com/filamind-app/filamind-setup/main/install.sh | bash
 ```
 
-This clones the installer, puts the `filamind-setup` command on your PATH (system-wide if it can, otherwise in `~/.local/bin`), and runs the **first-run wizard** — which covers every case from one command. It detects your printer and: on a **fresh host** installs the whole stack from scratch (Klipper, Moonraker, and the FilaMind suite); on an **existing Mainsail/Fluidd** host installs FilaMind alongside or migrates, without touching what you already have. It needs only `git` and `python3` to start, and you can re-run it any time to update or repair.
+This clones the installer, puts the `filamind-setup` command on your PATH (system-wide if it can, otherwise in `~/.local/bin`), and runs the **first-run wizard** - which covers every case from one command. It detects your printer and: on a **fresh host** installs the whole stack from scratch (Klipper, Moonraker, and the FilaMind suite); on an **existing Mainsail/Fluidd** host installs FilaMind alongside or migrates, without touching what you already have. It needs only `git` and `python3` to start, and you can re-run it any time to update or repair.
 
 To skip the wizard and go straight to something specific, pass a command through:
 
@@ -45,7 +45,7 @@ You can finish in a graphical wizard instead of the terminal:
 filamind-setup serve
 ```
 
-It prints a one-time link — `http://<printer-ip>:8077/?t=<token>` — to open on any device on your network. The token is shown only in the terminal that launched it, so only you can drive the install. No extra dependencies: it's Python's standard library, over the same engine as the CLI.
+It prints a one-time link - `http://<printer-ip>:8077/?t=<token>` - to open on any device on your network. The token is shown only in the terminal that launched it, so only you can drive the install. No extra dependencies: it's Python's standard library, over the same engine as the CLI.
 
 ## Ongoing use
 
@@ -76,7 +76,7 @@ This leaves every component you installed, and your Klipper config and Moonraker
 
 ## What it manages
 
-A curated catalog (`catalog.json`) spanning the whole stack: core (Klipper, Moonraker), web UIs, touchscreens, webcam, filament tracking, mobile companions, remote monitoring, Klipper add-ons, and firmware tools. **Adding a component is one entry in the catalog** — the engine itself never changes.
+A curated catalog (`catalog.json`) spanning the whole stack: core (Klipper, Moonraker), web UIs, touchscreens, webcam, filament tracking, mobile companions, remote monitoring, Klipper add-ons, and firmware tools. **Adding a component is one entry in the catalog** - the engine itself never changes.
 
 | Group | Examples |
 | ----- | -------- |
@@ -95,17 +95,17 @@ How a component installs depends on its catalog `type`:
 
 - **FilaMind apps** (flow, 3d, screen) install through their own one-line installers.
 - **Git-based components** are cloned and handed to their own `install.sh`.
-- **Web UIs** are detected and linked once present — install them with their own setup or a tool like KIAUH, and the manager picks them up.
+- **Web UIs** are detected and linked once present - install them with their own setup or a tool like KIAUH, and the manager picks them up.
 - **Dependencies install first** (for example Moonraker before a UI). Install detection combines Moonraker's update manager, managed systemd services, and on-disk checks, so it stays accurate even when one signal is missing.
 
 ## Wizards
 
-- **Setup wizard** (`bootstrap`) — the first install, covering every scenario from one command. It probes the host, then installs whatever is missing in dependency order: on a fresh host that means the whole stack from scratch (Klipper → Moonraker → the FilaMind suite); on a host that already has Klipper and Moonraker it just adds the suite. Anything already present is skipped, never reinstalled.
-- **Migration** — adopt an existing Klipper / Moonraker / UI setup by installing FilaMind **alongside** it. This is non-destructive: your Klipper config, macros, and Moonraker database are left untouched, and your previous UI keeps working.
+- **Setup wizard** (`bootstrap`) - the first install, covering every scenario from one command. It probes the host, then installs whatever is missing in dependency order: on a fresh host that means the whole stack from scratch (Klipper > Moonraker > the FilaMind suite); on a host that already has Klipper and Moonraker it just adds the suite. Anything already present is skipped, never reinstalled.
+- **Migration** - adopt an existing Klipper / Moonraker / UI setup by installing FilaMind **alongside** it. This is non-destructive: your Klipper config, macros, and Moonraker database are left untouched, and your previous UI keeps working.
 
 ## How it's built
 
-FilaMind Setup is deliberately small and dependency-free: a Python 3 engine (`engine.py`), a thin CLI front-end (`filamind-setup`), a bootstrap shell script (`install.sh`), and the catalog (`catalog.json`). The engine uses only the Python standard library, so it runs on a fresh printer host with nothing extra installed. Every catalog entry is validated on load, every repo slug is checked before it ever reaches a URL or a command, and the manager never clears anything outside a direct child of `$HOME`. For the full design — the catalog schema, install detection, the safety rules, and how the CLI and the flow widget share one engine — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+FilaMind Setup is deliberately small and dependency-free: a Python 3 engine (`engine.py`), a thin CLI front-end (`filamind-setup`), a bootstrap shell script (`install.sh`), and the catalog (`catalog.json`). The engine uses only the Python standard library, so it runs on a fresh printer host with nothing extra installed. Every catalog entry is validated on load, every repo slug is checked before it ever reaches a URL or a command, and the manager never clears anything outside a direct child of `$HOME`. For the full design - the catalog schema, install detection, the safety rules, and how the CLI and the flow widget share one engine - see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## How it relates to the suite
 
@@ -131,14 +131,14 @@ python ./filamind-setup probe
 python ./filamind-setup list
 ```
 
-To add a component, add one entry to `catalog.json` (the schema and `type` values are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)) — no engine change needed. CI runs the same checks above plus a dependency-order smoke test on every push and pull request.
+To add a component, add one entry to `catalog.json` (the schema and `type` values are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)) - no engine change needed. CI runs the same checks above plus a dependency-order smoke test on every push and pull request.
 
 ## Documentation
 
 | Document | What's inside |
 | -------- | ------------- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Catalog schema, the shared engine, install detection, the safety model, and the two front-ends |
-| [catalog.json](catalog.json) | The component catalog itself — the single source of truth |
+| [catalog.json](catalog.json) | The component catalog itself - the single source of truth |
 
 ## Support
 

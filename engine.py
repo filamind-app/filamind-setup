@@ -136,7 +136,7 @@ def _moonraker_managed(url: str = "http://127.0.0.1:7125") -> set[str]:
         info = data.get("result", {}).get("version_info", {})
         return {k.lower() for k in info}
     except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError):
-        # Unreachable / non-JSON / unexpected shape — detection falls back to the dir/unit heuristics.
+        # Unreachable / non-JSON / unexpected shape - detection falls back to the dir/unit heuristics.
         return set()
 
 
