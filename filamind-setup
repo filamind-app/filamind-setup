@@ -88,6 +88,10 @@ def main() -> int:
     sub.add_parser("probe")
     sp_serve = sub.add_parser("serve")
     sp_serve.add_argument("--port", type=int, default=8077)
+    sp_serve.add_argument("--persist", action="store_true")  # stable token (used by the wizard service)
+    sp_wizard = sub.add_parser("wizard")  # install/remove the always-on browser Setup wizard
+    sp_wizard.add_argument("--port", type=int, default=8077)
+    sp_wizard.add_argument("--remove", action="store_true")
     for verb in ("install", "remove", "update"):
         sp = sub.add_parser(verb)
         sp.add_argument("id")
@@ -114,7 +118,15 @@ def main() -> int:
         if args.cmd == "serve":
             from setup_server import serve
 
-            serve(port=args.port)
+            serve(port=args.port, persist=args.persist)
+            return 0
+        if args.cmd == "wizard":
+            if args.remove:
+                eng.remove_wizard_service()
+                print("Removed the always-on browser Setup wizard service.")
+            else:
+                url = eng.install_wizard_service(port=args.port)
+                print(f"Browser Setup wizard is on. Open it any time:\n  {url}")
             return 0
         return cmd_menu(eng)
     except SetupError as e:

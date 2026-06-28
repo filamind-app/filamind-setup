@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from engine import SetupEngine, SetupError
@@ -95,6 +97,26 @@ WIZARD_HTML = r"""<!doctype html>
 """
 
 
+def ensure_persistent_token() -> str:
+    """A STABLE token for the always-on wizard service, so its link survives restarts. Kept 0600 in
+    the user's config dir and created on first use; the one-shot `serve` uses a fresh random token."""
+    p = Path.home() / ".config" / "filamind" / "setup-wizard-token"
+    try:
+        existing = p.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    p.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(18)
+    p.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return token
+
+
 def _lan_ip() -> str:
     """Best-effort LAN IP for the printed link; falls back to localhost."""
     try:
@@ -175,10 +197,11 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def serve(port: int = 8077) -> None:
-    """Start the browser-finish wizard and print the link (the token appears only here, in the
-    terminal, so only the operator who launched it can drive setup over the LAN)."""
-    token = secrets.token_urlsafe(18)
+def serve(port: int = 8077, persist: bool = False) -> None:
+    """Start the browser-finish wizard and print the link. One-shot mode uses a fresh random token
+    printed only here (only the operator who launched it can drive setup). ``persist=True`` (the
+    always-on wizard service) reuses the stable host token so the saved link stays valid."""
+    token = ensure_persistent_token() if persist else secrets.token_urlsafe(18)
     httpd = ThreadingHTTPServer(("0.0.0.0", port), _make_handler(token))
     url = f"http://{_lan_ip()}:{port}/?t={token}"
     print("\nFinish in your browser - open this link (only this one works; the token is")

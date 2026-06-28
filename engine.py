@@ -8,11 +8,13 @@
 # ======================================================================= #
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import urllib.error
@@ -30,6 +32,13 @@ _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 # Component install types the engine knows how to act on.
 _KNOWN_TYPES = {"git_repo", "web", "service", "tauri", "manual"}
+
+# The FilaMind suite the first-run wizard stands up: the host widget app + the two native apps, each
+# installed WITH its service (3d -> agent, screen -> native kiosk) via the catalog's install_args.
+SUITE_APPS = ["filamind-flow", "filamind-3d", "filamind-screen"]
+
+# Optional always-on browser Setup wizard (opt-in): a systemd service running `filamind-setup serve`.
+WIZARD_UNIT = "/etc/systemd/system/filamind-setup-wizard.service"
 
 
 def _flush_print(line: str) -> None:
@@ -53,6 +62,7 @@ class Component:
     service: str = ""
     dir: str = ""
     install: str = ""  # install-script path within the repo clone (defaults to install.sh)
+    install_args: str = ""  # subcommand for a first-party installer (3d -> agent, screen -> native)
 
     @property
     def install_dir(self) -> Path:
@@ -95,6 +105,7 @@ def load_catalog(path: Path = CATALOG) -> dict[str, Component]:
                 service=c.get("service", ""),
                 dir=c.get("dir", ""),
                 install=c.get("install", ""),
+                install_args=c.get("install_args", ""),
             )
     return out
 
@@ -316,7 +327,12 @@ class SetupEngine:
     def _do_install(self, c: Component) -> None:
         if c.first_party:
             # FilaMind apps carry a self-cloning one-line installer (fetched + run without a shell).
-            if self._run_remote_installer(c) != 0:
+            # `install_args` selects the deployment that stands up the app's SERVICE rather than the
+            # bare default: FilaMind 3d -> `agent` (managed backend on :8030, registers with
+            # Moonraker), FilaMind screen -> `native` (the .deb kiosk + its service). Without it the
+            # suite install would only put down the static UI, never the per-app service.
+            args = c.install_args.split() if c.install_args else []
+            if self._run_remote_installer(c, *args) != 0:
                 raise SetupError(f"{c.name} installer failed")
             return
         if c.type in ("git_repo", "service"):
@@ -391,22 +407,86 @@ class SetupEngine:
             if choice == "cancel":
                 return
             if choice == "migrate to FilaMind":
-                self.migrate(p)
+                self.migrate(p, ask)
                 return
         if empty:
             self.log("No Klipper/Moonraker detected - installing the whole stack from scratch:")
-            self.log("  Klipper + Moonraker + the FilaMind suite (flow + 3d).")
+            self.log("  Klipper + Moonraker + the FilaMind suite (flow + 3d + screen).")
         else:
-            self.log("Installing the FilaMind suite (flow + 3d); any missing dependency is added too.")
-        # Dependency resolution installs Klipper -> Moonraker first on an empty host, then the suite.
-        self.install_all(["filamind-flow", "filamind-3d"], probe=p)
+            self.log("Installing the FilaMind suite (flow + 3d + screen); missing deps are added too.")
+        # Dependency resolution installs Klipper -> Moonraker first on an empty host, then the suite
+        # WITH each app's service: the 3d agent (:8030) and the screen native kiosk, each registered
+        # with Moonraker (service control + update_manager) by its own installer.
+        self.install_all(SUITE_APPS, probe=p)
         self.log("Done.")
+        self._offer_wizard(ask)
 
-    def migrate(self, probe: dict | None = None) -> None:
+    def migrate(self, probe: dict | None = None, ask: Callable[[str, list[str]], str] | None = None) -> None:
         """Adopt an existing Klipper/Moonraker setup: install FilaMind alongside, non-destructively.
         Settings stay in Moonraker's DB and are picked up automatically; nothing is deleted."""
         p = probe or self.probe()
         self.log("Migrating non-destructively: installing FilaMind alongside your current UI.")
         self.log("Your Klipper config, macros and Moonraker database are left untouched.")
-        self.install_all(["filamind-flow", "filamind-3d"], probe=p)
+        self.install_all(SUITE_APPS, probe=p)
         self.log("Done. Your previous UI still works; open FilaMind to use the suite.")
+        self._offer_wizard(ask)
+
+    def _offer_wizard(self, ask: Callable[[str, list[str]], str] | None = None) -> None:
+        """Optionally stand up an always-on browser Setup wizard - a link you can open from any
+        device later to install/manage components. Opt-in: only when a front-end supplies `ask` and
+        the operator says yes (otherwise it's a no-op; start it any time with `filamind-setup wizard`)."""
+        if ask is None:
+            return
+        choice = ask(
+            "Create an optional always-on browser Setup wizard (a link you can open from any "
+            "device to install/manage components later)?",
+            ["yes", "no"],
+        )
+        if choice != "yes":
+            self.log("Skipped the browser wizard - start it any time with:  filamind-setup wizard")
+            return
+        try:
+            url = self.install_wizard_service()
+            self.log("Browser Setup wizard is on. Open it any time (link saved on the host):")
+            self.log(f"  {url}")
+        except SetupError as exc:
+            self.log(f"Could not set up the browser wizard ({exc}); use 'filamind-setup serve' instead.")
+
+    def install_wizard_service(self, port: int = 8077) -> str:
+        """Stand up the browser Setup wizard as an always-on systemd service and return its link.
+        The link carries a stable token kept 0600 on the host, so it stays valid across restarts."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from setup_server import _lan_ip, ensure_persistent_token  # local, stdlib-only
+
+        cli = Path(__file__).resolve().parent / "filamind-setup"
+        unit = (
+            "[Unit]\n"
+            "Description=FilaMind Setup browser wizard\n"
+            "After=network-online.target\nWants=network-online.target\n\n"
+            "[Service]\nType=simple\n"
+            f"User={getpass.getuser()}\n"
+            f"ExecStart={sys.executable} {cli} serve --persist --port {port}\n"
+            "Restart=always\nRestartSec=5\n\n"
+            "[Install]\nWantedBy=multi-user.target\n"
+        )
+        fd, tmp = tempfile.mkstemp(suffix=".service")
+        os.close(fd)
+        Path(tmp).write_text(unit, encoding="utf-8")
+        try:
+            if self._run(["sudo", "cp", tmp, WIZARD_UNIT]) != 0:
+                raise SetupError("could not write the wizard service unit (need sudo)")
+            self._run(["sudo", "systemctl", "daemon-reload"])
+            if self._run(["sudo", "systemctl", "enable", "--now", "filamind-setup-wizard"]) != 0:
+                raise SetupError("could not start the wizard service")
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return f"http://{_lan_ip()}:{port}/?t={ensure_persistent_token()}"
+
+    def remove_wizard_service(self) -> None:
+        """Stop and remove the always-on browser Setup wizard service."""
+        self._run(["sudo", "systemctl", "disable", "--now", "filamind-setup-wizard"])
+        self._run(["sudo", "rm", "-f", WIZARD_UNIT])
+        self._run(["sudo", "systemctl", "daemon-reload"])
