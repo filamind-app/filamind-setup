@@ -344,7 +344,10 @@ class SetupEngine:
                     raise SetupError(f"Refusing to clear {dest} (not a direct $HOME child)")
                 shutil.rmtree(dest)
             if not (dest / ".git").is_dir():
-                if self._run(["git", "clone", "--depth", "1", c.repo_url, str(dest)]) != 0:
+                # Full clone (NOT --depth 1): Moonraker's update_manager tracks these repos and needs
+                # their tags to report a real version instead of "v0.0.0-...-inferred" (and it warns on
+                # shallow clones). The one-time clone cost is worth a correctly-managed update entry.
+                if self._run(["git", "clone", c.repo_url, str(dest)]) != 0:
                     raise SetupError(f"git clone of {c.name} failed")
             # Never trust a half-finished clone before running its installer.
             if self._run(["git", "-C", str(dest), "rev-parse", "--is-inside-work-tree"]) != 0:
