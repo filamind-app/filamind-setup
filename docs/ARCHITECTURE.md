@@ -17,7 +17,7 @@ FilaMind Setup is the installer and manager for the FilaMind suite and the Klipp
 | `install.sh` | Bootstrap shell script. The `curl ... \| bash` entry point: clones the repo, puts the command on PATH, reconnects the terminal, and launches the wizard. |
 | `filamind-setup` | The CLI front-end (a Python script). Parses subcommands and drives the engine; supplies the interactive prompts. |
 | `engine.py` | The shared engine. Loads and validates the catalog, probes the host, and performs install / remove / bootstrap / migrate by delegating to component installers. |
-| `catalog.json` | The component catalog — the single source of truth. |
+| `catalog.json` | The component catalog - the single source of truth. |
 | `.github/workflows/ci.yml` | CI: compile checks, catalog validation, and a dependency-order smoke test. |
 
 ## The catalog
@@ -37,7 +37,7 @@ Each component is loaded into a `Component` dataclass. Required fields are valid
 | `type` | yes | How it installs / updates: one of `git_repo`, `web`, `service`, `tauri`, `manual`. |
 | `deps` | no | Other component ids that must install first. |
 | `first_party` | no | `true` for FilaMind apps, which carry a self-cloning one-line installer. |
-| `group` | — | Derived from the enclosing group; used for grouped output. |
+| `group` | - | Derived from the enclosing group; used for grouped output. |
 | `desc` | no | One-line description shown in `list`. |
 | `manager_key` | no | Name Moonraker's update manager uses, when it differs from `id`. |
 | `service` | no | Systemd unit name, when the component runs as a service. |
@@ -47,10 +47,10 @@ Each component is loaded into a `Component` dataclass. Required fields are valid
 
 The `type` field selects the install path in the engine:
 
-- **`git_repo` / `service`** — clone the repo into `$HOME/<dir>` (shallow), verify the clone is a real work tree, then run its `install.sh` if present. A leftover non-git directory from an interrupted clone is cleared first, but only ever a direct child of `$HOME`.
-- **`web`** — not installed directly. These are detected and linked once present; the operator installs them with the project's own setup (or a tool like KIAUH).
-- **`tauri`** — only installable when also marked `first_party` (via the app's own installer); a non-first-party `tauri` entry is catalog-only and fails loudly if an install is attempted.
-- **`manual`** — needs hands-on steps; the engine points the operator at the component's documentation.
+- **`git_repo` / `service`** - clone the repo into `$HOME/<dir>` (shallow), verify the clone is a real work tree, then run its `install.sh` if present. A leftover non-git directory from an interrupted clone is cleared first, but only ever a direct child of `$HOME`.
+- **`web`** - not installed directly. These are detected and linked once present; the operator installs them with the project's own setup (or a tool like KIAUH).
+- **`tauri`** - only installable when also marked `first_party` (via the app's own installer); a non-first-party `tauri` entry is catalog-only and fails loudly if an install is attempted.
+- **`manual`** - needs hands-on steps; the engine points the operator at the component's documentation.
 
 First-party FilaMind apps (`first_party: true`) override the type path entirely: they install through their own remote one-line installer regardless of declared type.
 
@@ -60,7 +60,7 @@ Add one entry to the appropriate group in `catalog.json`. Pick the right `type`,
 
 ## The engine
 
-`SetupEngine` is the whole brain. It is constructed with an optional `log` callback and an optional command `runner`, both overridable — which is exactly how the GUI backend reuses it (capturing log lines and command execution) without forking any logic.
+`SetupEngine` is the whole brain. It is constructed with an optional `log` callback and an optional command `runner`, both overridable - which is exactly how the GUI backend reuses it (capturing log lines and command execution) without forking any logic.
 
 ### Read-only probing
 
@@ -70,7 +70,7 @@ Add one entry to the appropriate group in `catalog.json`. Pick the right `type`,
 2. **A systemd unit** matching its `service` is present (`systemctl list-units`).
 3. **Its install directory** (`$HOME/<dir>` or `$HOME/<id>`) exists.
 
-Combining three signals keeps detection accurate when one is unavailable — for example when Moonraker is unreachable, or a component installs without a service. Every part of probing is wrapped so an unreachable Moonraker, a missing `systemctl`, or an unreadable `/etc/os-release` degrades gracefully to the remaining heuristics instead of erroring.
+Combining three signals keeps detection accurate when one is unavailable - for example when Moonraker is unreachable, or a component installs without a service. Every part of probing is wrapped so an unreachable Moonraker, a missing `systemctl`, or an unreadable `/etc/os-release` degrades gracefully to the remaining heuristics instead of erroring.
 
 ### Dependency ordering
 
@@ -78,14 +78,14 @@ Combining three signals keeps detection accurate when one is unavailable — for
 
 ### Mutations
 
-- **`install(id)`** — resolve dependencies, then for each not-yet-installed component run `_do_install`, which branches on `first_party` and `type` as described above.
-- **`remove(id)`** — for first-party apps, run their installer with `uninstall`; otherwise disable the systemd unit (if any) and remove the install directory, but only when it is a direct child of `$HOME`. Removal failures are surfaced, never swallowed, so the tool can never report a false "removed".
+- **`install(id)`** - resolve dependencies, then for each not-yet-installed component run `_do_install`, which branches on `first_party` and `type` as described above.
+- **`remove(id)`** - for first-party apps, run their installer with `uninstall`; otherwise disable the systemd unit (if any) and remove the install directory, but only when it is a direct child of `$HOME`. Removal failures are surfaced, never swallowed, so the tool can never report a false "removed".
 
 ### The first-party installer trick
 
 First-party apps are installed by `_run_remote_installer`, which is careful in two ways that are worth recording because they were learned the hard way:
 
-1. **It runs the script's contents, not a temp-file path.** The first-party installers detect "am I a clone or a `curl | bash` pipe?" by testing `[ -f "$BASH_SOURCE" ]`. Handing them a downloaded temp file makes that test true, so they assume a clone layout that isn't there and fail. Running the *contents* via `bash -c` leaves `$BASH_SOURCE` empty — the same state as `curl | bash` — so the installer self-clones, which is correct.
+1. **It runs the script's contents, not a temp-file path.** The first-party installers detect "am I a clone or a `curl | bash` pipe?" by testing `[ -f "$BASH_SOURCE" ]`. Handing them a downloaded temp file makes that test true, so they assume a clone layout that isn't there and fail. Running the *contents* via `bash -c` leaves `$BASH_SOURCE` empty - the same state as `curl | bash` - so the installer self-clones, which is correct.
 2. **Arguments are passed as a list, never interpolated into a shell string.** Combined with strict repo-slug validation, a catalog typo or hostile entry can't inject shell syntax or redirect to a foreign host.
 
 ## Safety model
@@ -102,7 +102,7 @@ First-party apps are installed by `_run_remote_installer`, which is careful in t
 
 1. Check that `git` and `python3` exist (clear message and exit if not).
 2. Clone the installer into `$HOME/filamind-setup` (overridable via `FILAMIND_SETUP_DIR`; the repo via `FILAMIND_SETUP_REPO`), or fast-forward an existing checkout. A failed pull is reported and the run continues on the existing checkout rather than silently running stale code.
-3. Symlink `filamind-setup` onto PATH — `/usr/local/bin` if passwordless sudo is available, otherwise `~/.local/bin`.
+3. Symlink `filamind-setup` onto PATH - `/usr/local/bin` if passwordless sudo is available, otherwise `~/.local/bin`.
 4. **Reconnect the controlling terminal.** Under `curl ... | bash`, the Python process would inherit the curl pipe as stdin (already at EOF, not a TTY), so the wizard's prompts would hit EOF immediately. The script reattaches `/dev/tty` when one is available, so the wizard can prompt. If there is truly no terminal, the CLI exits cleanly with guidance instead of a traceback.
 5. `exec` the CLI with the requested command (defaulting to `bootstrap`).
 
@@ -119,17 +119,17 @@ This is why a fix in the engine is a fix everywhere, and why the CLI and the wid
 
 ## Wizards
 
-- **`bootstrap`** — probe the host, report the OS. If Klipper and Moonraker aren't both detected, advise installing those first and stop. If an existing UI (Mainsail / Fluidd / KlipperScreen) is found, ask whether to install alongside, migrate, or cancel; otherwise install the FilaMind suite (`filamind-flow`, then `filamind-3d`).
-- **`migrate`** — install FilaMind alongside an existing setup, non-destructively. Settings stay in Moonraker's database and are picked up automatically; nothing is deleted, and the previous UI keeps working.
+- **`bootstrap`** - probe the host, report the OS. If Klipper and Moonraker aren't both detected, advise installing those first and stop. If an existing UI (Mainsail / Fluidd / KlipperScreen) is found, ask whether to install alongside, migrate, or cancel; otherwise install the FilaMind suite (`filamind-flow`, then `filamind-3d`).
+- **`migrate`** - install FilaMind alongside an existing setup, non-destructively. Settings stay in Moonraker's database and are picked up automatically; nothing is deleted, and the previous UI keeps working.
 
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request, on Python 3.11:
 
-- `python -m py_compile engine.py filamind-setup` — both Python files compile.
-- `json.load` on `catalog.json` — the catalog is valid JSON.
-- `bash -n install.sh` — the bootstrap script parses.
-- An engine smoke test that loads the catalog and asserts the resolved dependency order is sane (`klipper` before `moonraker` before `mainsail`) — all without mutating the host.
+- `python -m py_compile engine.py filamind-setup` - both Python files compile.
+- `json.load` on `catalog.json` - the catalog is valid JSON.
+- `bash -n install.sh` - the bootstrap script parses.
+- An engine smoke test that loads the catalog and asserts the resolved dependency order is sane (`klipper` before `moonraker` before `mainsail`) - all without mutating the host.
 
 ## Conventions
 
